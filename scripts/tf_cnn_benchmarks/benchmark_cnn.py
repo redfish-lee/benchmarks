@@ -62,7 +62,7 @@ _DEFAULT_NUM_BATCHES = 100
 # TODO(reedwm): add upper_bound and lower_bound to appropriate integer and
 # float flags, and change certain string flags to enum flags.
 
-flags.DEFINE_string('model', 'trivial',
+flags.DEFINE_string('model', 'resnet32',
                     'Name of the model to run, the list of supported models '
                     'are defined in models/model.py')
 # The code will first check if it's running under benchmarking mode
@@ -83,16 +83,16 @@ flags.DEFINE_boolean('forward_only', False,
                      'whether use forward-only or training for benchmarking')
 flags.DEFINE_boolean('freeze_when_forward_only', False,
                      'whether to freeze the graph when in forward-only mode.')
-flags.DEFINE_boolean('print_training_accuracy', False,
+flags.DEFINE_boolean('print_training_accuracy', True,
                      'whether to calculate and print training accuracy during '
                      'training')
-flags.DEFINE_integer('batch_size', 0, 'batch size per compute device')
+flags.DEFINE_integer('batch_size', 32, 'batch size per compute device')
 flags.DEFINE_integer('batch_group_size', 1,
                      'number of groups of batches processed in the image '
                      'producer.')
 flags.DEFINE_integer('num_batches', None, 'number of batches to run, excluding '
                      'warmup. Defaults to %d' % _DEFAULT_NUM_BATCHES)
-flags.DEFINE_float('num_epochs', None,
+flags.DEFINE_float('num_epochs', 1,
                    'number of epochs to run, excluding warmup. '
                    'This and --num_batches cannot both be specified.')
 flags.DEFINE_integer('num_warmup_batches', None,
@@ -104,11 +104,11 @@ flags.DEFINE_string('gpu_indices', '', 'indices of worker GPUs in ring order')
 flags.DEFINE_integer('display_every', 10,
                      'Number of local steps after which progress is printed '
                      'out')
-flags.DEFINE_string('data_dir', None,
+flags.DEFINE_string('data_dir', '/dev/shm/cifar-10-batches-py/',
                     'Path to dataset in TFRecord format (aka Example '
                     'protobufs). If not specified, synthetic data will be '
                     'used.')
-flags.DEFINE_string('data_name', None,
+flags.DEFINE_string('data_name', 'cifar10',
                     'Name of dataset: imagenet or cifar10. If not specified, '
                     'it is automatically guessed based on data_dir.')
 flags.DEFINE_string('resize_method', 'bilinear',
@@ -296,7 +296,7 @@ flags.DEFINE_boolean('staged_vars', False,
                      'computation')
 flags.DEFINE_boolean('force_gpu_compatible', False,
                      'whether to enable force_gpu_compatible in GPU_Options')
-flags.DEFINE_boolean('allow_growth', None,
+flags.DEFINE_boolean('allow_growth', True,
                      'whether to enable allow_growth in GPU_Options')
 flags.DEFINE_boolean('xla', False, 'whether to enable XLA')
 flags.DEFINE_boolean('fuse_decode_and_crop', True,
@@ -449,7 +449,7 @@ flags.DEFINE_string('worker_hosts', '', 'Comma-separated list of target hosts')
 flags.DEFINE_string('controller_host', None, 'optional controller host')
 flags.DEFINE_integer('task_index', 0, 'Index of task within the job')
 flags.DEFINE_string('server_protocol', 'grpc', 'protocol for servers')
-flags.DEFINE_boolean('cross_replica_sync', True, '')
+flags.DEFINE_boolean('cross_replica_sync', False, '')
 flags.DEFINE_string('horovod_device', '', 'Device to do Horovod all-reduce on: '
                     'empty (default), cpu or gpu. Default with utilize GPU if '
                     'Horovod was compiled with the HOROVOD_GPU_ALLREDUCE '
