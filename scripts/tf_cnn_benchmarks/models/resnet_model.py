@@ -189,6 +189,7 @@ class ResnetModel(model_lib.Model):
 
   def __init__(self, model, layer_counts):
     default_batch_sizes = {
+        'resnet32': 64,
         'resnet50': 64,
         'resnet101': 32,
         'resnet152': 32,
@@ -307,7 +308,8 @@ class ResnetCifar10Model(model_lib.Model):
 
   def get_learning_rate(self, global_step, batch_size):
     num_batches_per_epoch = int(50000 / batch_size)
-    boundaries = num_batches_per_epoch * np.array([82, 123, 300],
+    # boundaries = num_batches_per_epoch * np.array([82, 123, 300],
+    boundaries = num_batches_per_epoch * np.array([30, 60, 90],
                                                   dtype=np.int64)
     boundaries = [x for x in boundaries]
     values = [0.1, 0.01, 0.001, 0.0002]
