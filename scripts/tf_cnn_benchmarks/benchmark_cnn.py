@@ -86,13 +86,13 @@ flags.DEFINE_boolean('freeze_when_forward_only', False,
 flags.DEFINE_boolean('print_training_accuracy', True,
                      'whether to calculate and print training accuracy during '
                      'training')
-flags.DEFINE_integer('batch_size', 32, 'batch size per compute device')
+flags.DEFINE_integer('batch_size', 64, 'batch size per compute device')
 flags.DEFINE_integer('batch_group_size', 1,
                      'number of groups of batches processed in the image '
                      'producer.')
 flags.DEFINE_integer('num_batches', None, 'number of batches to run, excluding '
                      'warmup. Defaults to %d' % _DEFAULT_NUM_BATCHES)
-flags.DEFINE_float('num_epochs', 1,
+flags.DEFINE_float('num_epochs', 100,
                    'number of epochs to run, excluding warmup. '
                    'This and --num_batches cannot both be specified.')
 flags.DEFINE_integer('num_warmup_batches', None,
@@ -101,7 +101,7 @@ flags.DEFINE_integer('autotune_threshold', None,
                      'The autotune threshold for the models')
 flags.DEFINE_integer('num_gpus', 1, 'the number of GPUs to run on')
 flags.DEFINE_string('gpu_indices', '', 'indices of worker GPUs in ring order')
-flags.DEFINE_integer('display_every', 10,
+flags.DEFINE_integer('display_every', 100,
                      'Number of local steps after which progress is printed '
                      'out')
 flags.DEFINE_string('data_dir', '/dev/shm/cifar-10-batches-py/',
@@ -120,7 +120,7 @@ flags.DEFINE_string('resize_method', 'bilinear',
                     'a round-robin fashion. Other modes support any sizes and '
                     'apply random bbox distortions before resizing (even with '
                     'distortions=False).')
-flags.DEFINE_boolean('distortions', True,
+flags.DEFINE_boolean('distortions', False,
                      'Enable/disable distortions during image preprocessing. '
                      'These include bbox and color distortions.')
 flags.DEFINE_boolean('use_datasets', True,
@@ -212,7 +212,7 @@ flags.DEFINE_string('partitioned_graph_file_prefix', None,
                     'If specified, after the graph has been partitioned and '
                     'optimized, write out each partitioned graph to a file '
                     'with the given prefix.')
-flags.DEFINE_enum('optimizer', 'sgd', ('momentum', 'sgd', 'rmsprop'),
+flags.DEFINE_enum('optimizer', 'momentum', ('momentum', 'sgd', 'rmsprop'),
                   'Optimizer to use: momentum or sgd or rmsprop')
 flags.DEFINE_float('init_learning_rate', None,
                    'Initial learning rate for training.')
@@ -456,7 +456,7 @@ flags.DEFINE_string('horovod_device', '', 'Device to do Horovod all-reduce on: '
                     'option, and CPU otherwise.')
 
 # Summary and Save & load checkpoints.
-flags.DEFINE_integer('summary_verbosity', 0, 'Verbosity level for summary ops. '
+flags.DEFINE_integer('summary_verbosity', 1, 'Verbosity level for summary ops. '
                      'level 0: disable any summary.\n'
                      'level 1: small and fast ops, e.g.: learning_rate, '
                      'total_loss.\n'
@@ -464,16 +464,16 @@ flags.DEFINE_integer('summary_verbosity', 0, 'Verbosity level for summary ops. '
                      'gradients.\n'
                      'level 3: expensive ops: images and histogram of each '
                      'gradient.\n')
-flags.DEFINE_integer('save_summaries_steps', 0,
+flags.DEFINE_integer('save_summaries_steps', 200,
                      'How often to save summaries for trained models. Pass 0 '
                      'to disable summaries.')
 flags.DEFINE_integer('save_model_secs', 0,
                      'How often to save trained models. Pass 0 to disable '
                      'checkpoints.')
-flags.DEFINE_string('train_dir', None,
+flags.DEFINE_string('train_dir', '/home/hylee/logs/train',
                     'Path to session checkpoints. Pass None to disable saving '
                     'checkpoint at the end.')
-flags.DEFINE_string('eval_dir', '/tmp/tf_cnn_benchmarks/eval',
+flags.DEFINE_string('eval_dir', '/home/hylee/logs/eval',
                     'Directory where to write eval event logs.')
 flags.DEFINE_string('result_storage', None,
                     'Specifies storage option for benchmark results. None '
@@ -483,7 +483,7 @@ flags.DEFINE_string('result_storage', None,
                     'permissions and meant to be used from cbuilds).')
 
 # Benchmark logging for model garden metric
-flags.DEFINE_string('benchmark_log_dir', None,
+flags.DEFINE_string('benchmark_log_dir', '/home/hylee/logs/benchmark_log',
                     'The directory to place the log files containing the '
                     'results of benchmark. The logs are created by '
                     'BenchmarkFileLogger. Requires the root of the Tensorflow '
@@ -1424,8 +1424,7 @@ class BenchmarkCNN(object):
       # only contain the latest info. The benchmark_log_dir should be updated
       # for every new run.
       self.benchmark_logger.log_run_info(
-          self.model.get_model(), benchmark_info['dataset_name'], run_param,
-          test_id=self.params.benchmark_test_id)
+          self.model.get_model(), benchmark_info['dataset_name'], run_param)
 
   def run(self):
     """Run the benchmark task assigned to this process.
