@@ -118,14 +118,18 @@ class Cifar10Data(Dataset):
 
     inputs = []
     for filename in filenames:
-      with gfile.Open(filename, 'r') as f:
-        inputs.append(cPickle.load(f))
+      # with gfile.Open(filename, 'rb') as f:
+      #   inputs.append(cPickle.load(f))
+      with open(filename, 'rb') as f:
+        data_dict = cPickle.load(f, encoding='bytes')
+        inputs.append(data_dict)
+
     # See http://www.cs.toronto.edu/~kriz/cifar.html for a description of the
     # input format.
     all_images = np.concatenate(
-        [each_input['data'] for each_input in inputs]).astype(np.float32)
+        [each_input[b'data'] for each_input in inputs]).astype(np.float32)
     all_labels = np.concatenate(
-        [each_input['labels'] for each_input in inputs])
+        [each_input[b'labels'] for each_input in inputs])
     return all_images, all_labels
 
   def num_examples_per_epoch(self, subset='train'):
