@@ -22,6 +22,8 @@ import threading
 import numpy as np
 import tensorflow as tf
 
+import json
+CLUSTER_FILE='cluster.cfg'
 
 def tensorflow_version_tuple():
   v = tf.__version__
@@ -202,11 +204,15 @@ class BaseClusterManager(object):
   """The manager for the cluster of servers running the benchmark."""
 
   def __init__(self, params):
+    """
     worker_hosts = params.worker_hosts.split(',')
     ps_hosts = params.ps_hosts.split(',') if params.ps_hosts else []
     cluster = {'worker': worker_hosts}
     if ps_hosts:
       cluster['ps'] = ps_hosts
+    """
+    with open(CLUSTER_FILE) as f:
+      cluster = json.load(f)
     self._cluster_spec = tf.train.ClusterSpec(cluster)
 
   def get_target(self):
