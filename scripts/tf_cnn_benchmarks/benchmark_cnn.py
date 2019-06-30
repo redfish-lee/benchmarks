@@ -39,6 +39,11 @@ from google.protobuf import text_format
 from tensorflow.core.protobuf import rewriter_config_pb2
 from tensorflow.python import debug as tf_debug
 from tensorflow.python.client import timeline
+
+# r1.9->r1.8
+from tensorflow.python.framework import graph_util
+from tensorflow.python.framework import importer
+
 from tensorflow.python.ops import data_flow_ops
 from tensorflow.python.platform import gfile
 from tensorflow.python.util import nest
@@ -54,13 +59,16 @@ from cnn_util import log_fn
 from models import model_config
 from platforms import util as platforms_util
 
-
+HOME=os.environ['HOME']
 _DEFAULT_NUM_BATCHES = 100
+
+# hades03 no gpus
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 # TODO(reedwm): add upper_bound and lower_bound to appropriate integer and
 # float flags, and change certain string flags to enum flags.
 
-flags.DEFINE_string('model', 'trivial',
+flags.DEFINE_string('model', 'resnet32',
                     'Name of the model to run, the list of supported models '
                     'are defined in models/model.py')
 # The code will first check if it's running under benchmarking mode
@@ -79,16 +87,20 @@ flags.DEFINE_integer('eval_interval_secs', 0,
                      'run. Pass 0 to eval only once.')
 flags.DEFINE_boolean('forward_only', False,
                      'whether use forward-only or training for benchmarking')
-flags.DEFINE_boolean('print_training_accuracy', False,
+
+flags.DEFINE_boolean('freeze_when_forward_only', False,
+                     'whether to freeze the graph when in forward-only mode.')
+
+flags.DEFINE_boolean('print_training_accuracy', True,
                      'whether to calculate and print training accuracy during '
                      'training')
-flags.DEFINE_integer('batch_size', 0, 'batch size per compute device')
+flags.DEFINE_integer('batch_size', 64, 'batch size per compute device /32')
 flags.DEFINE_integer('batch_group_size', 1,
                      'number of groups of batches processed in the image '
                      'producer.')
 flags.DEFINE_integer('num_batches', None, 'number of batches to run, excluding '
                      'warmup. Defaults to %d' % _DEFAULT_NUM_BATCHES)
-flags.DEFINE_float('num_epochs', None,
+flags.DEFINE_float('num_epochs', 1,
                    'number of epochs to run, excluding warmup. '
                    'This and --num_batches cannot both be specified.')
 flags.DEFINE_integer('num_warmup_batches', None,
@@ -97,14 +109,14 @@ flags.DEFINE_integer('autotune_threshold', None,
                      'The autotune threshold for the models')
 flags.DEFINE_integer('num_gpus', 1, 'the number of GPUs to run on')
 flags.DEFINE_string('gpu_indices', '', 'indices of worker GPUs in ring order')
-flags.DEFINE_integer('display_every', 10,
+flags.DEFINE_integer('display_every', 100,
                      'Number of local steps after which progress is printed '
                      'out')
-flags.DEFINE_string('data_dir', None,
+flags.DEFINE_string('data_dir', '/dev/shm/cifar10/cifar-10-batches-py/',
                     'Path to dataset in TFRecord format (aka Example '
                     'protobufs). If not specified, synthetic data will be '
                     'used.')
-flags.DEFINE_string('data_name', None,
+flags.DEFINE_string('data_name', 'cifar10',
                     'Name of dataset: imagenet or cifar10. If not specified, '
                     'it is automatically guessed based on data_dir.')
 flags.DEFINE_string('resize_method', 'bilinear',
@@ -116,7 +128,7 @@ flags.DEFINE_string('resize_method', 'bilinear',
                     'a round-robin fashion. Other modes support any sizes and '
                     'apply random bbox distortions before resizing (even with '
                     'distortions=False).')
-flags.DEFINE_boolean('distortions', True,
+flags.DEFINE_boolean('distortions', False,
                      'Enable/disable distortions during image preprocessing. '
                      'These include bbox and color distortions.')
 flags.DEFINE_boolean('use_datasets', True,
@@ -124,7 +136,7 @@ flags.DEFINE_boolean('use_datasets', True,
 flags.DEFINE_string('input_preprocessor', 'default',
                     'Name of input preprocessor. The list of supported input '
                     'preprocessors are defined in preprocessing.py.')
-flags.DEFINE_string('gpu_thread_mode', 'gpu_private',
+flags.DEFINE_string('gpu_thread_mode', 'gpu_shared',
                     'Methods to assign GPU host work to threads. '
                     'global: all GPUs and CPUs share the same global threads; '
                     'gpu_private: a private threadpool for each GPU; '
@@ -166,15 +178,19 @@ flags.DEFINE_boolean('cache_data', False,
                      'many times. The purpose of this flag is to make it '
                      'possible to write regression tests that are not '
                      'bottlenecked by CNS throughput.')
-flags.DEFINE_enum('local_parameter_device', 'gpu', ('cpu', 'gpu', 'CPU', 'GPU'),
+flags.DEFINE_enum('local_parameter_device', 'cpu', ('cpu', 'gpu', 'CPU', 'GPU'),
                   'Device to use as parameter server: cpu or gpu. For '
                   'distributed training, it can affect where caching of '
                   'variables happens.')
-flags.DEFINE_enum('device', 'gpu', ('cpu', 'gpu', 'CPU', 'GPU'),
+# NHWC for cpu
+# But mkl is optimized for NCHW 
+flags.DEFINE_enum('device', 'cpu', ('cpu', 'gpu', 'CPU', 'GPU'),
                   'Device to use for computation: cpu or gpu')
 flags.DEFINE_enum('data_format', 'NCHW', ('NHWC', 'NCHW'),
                   'Data layout to use: NHWC (TF native) or NCHW (cuDNN '
                   'native, requires GPU).')
+
+# 
 flags.DEFINE_integer('num_intra_threads', 1,
                      'Number of threads to use for intra-op parallelism. If '
                      'set to 0, the system will pick an appropriate number.')
@@ -208,7 +224,7 @@ flags.DEFINE_string('partitioned_graph_file_prefix', None,
                     'If specified, after the graph has been partitioned and '
                     'optimized, write out each partitioned graph to a file '
                     'with the given prefix.')
-flags.DEFINE_enum('optimizer', 'sgd', ('momentum', 'sgd', 'rmsprop'),
+flags.DEFINE_enum('optimizer', 'momentum', ('momentum', 'sgd', 'rmsprop'),
                   'Optimizer to use: momentum or sgd or rmsprop')
 flags.DEFINE_float('init_learning_rate', None,
                    'Initial learning rate for training.')
@@ -292,7 +308,7 @@ flags.DEFINE_boolean('staged_vars', False,
                      'computation')
 flags.DEFINE_boolean('force_gpu_compatible', False,
                      'whether to enable force_gpu_compatible in GPU_Options')
-flags.DEFINE_boolean('allow_growth', None,
+flags.DEFINE_boolean('allow_growth', True,
                      'whether to enable allow_growth in GPU_Options')
 flags.DEFINE_boolean('xla', False, 'whether to enable XLA')
 flags.DEFINE_boolean('fuse_decode_and_crop', True,
@@ -321,7 +337,7 @@ flags.DEFINE_boolean('use_resource_vars', False,
                      'Resource variables are slower, but this option is useful '
                      'for debugging their performance.')
 # Performance tuning specific to MKL.
-flags.DEFINE_boolean('mkl', False, 'If true, set MKL environment variables.')
+flags.DEFINE_boolean('mkl', True, 'If true, set MKL environment variables.')
 flags.DEFINE_integer('kmp_blocktime', 30,
                      'The time, in milliseconds, that a thread should wait, '
                      'after completing the execution of a parallel region, '
@@ -434,14 +450,14 @@ flags.DEFINE_string('worker_hosts', '', 'Comma-separated list of target hosts')
 flags.DEFINE_string('controller_host', None, 'optional controller host')
 flags.DEFINE_integer('task_index', 0, 'Index of task within the job')
 flags.DEFINE_string('server_protocol', 'grpc', 'protocol for servers')
-flags.DEFINE_boolean('cross_replica_sync', True, '')
+flags.DEFINE_boolean('cross_replica_sync', False, '')
 flags.DEFINE_string('horovod_device', '', 'Device to do Horovod all-reduce on: '
                     'empty (default), cpu or gpu. Default with utilize GPU if '
                     'Horovod was compiled with the HOROVOD_GPU_ALLREDUCE '
                     'option, and CPU otherwise.')
 
 # Summary and Save & load checkpoints.
-flags.DEFINE_integer('summary_verbosity', 0, 'Verbosity level for summary ops. '
+flags.DEFINE_integer('summary_verbosity', 1, 'Verbosity level for summary ops. '
                      'level 0: disable any summary.\n'
                      'level 1: small and fast ops, e.g.: learning_rate, '
                      'total_loss.\n'
@@ -449,16 +465,16 @@ flags.DEFINE_integer('summary_verbosity', 0, 'Verbosity level for summary ops. '
                      'gradients.\n'
                      'level 3: expensive ops: images and histogram of each '
                      'gradient.\n')
-flags.DEFINE_integer('save_summaries_steps', 0,
+flags.DEFINE_integer('save_summaries_steps', 100,
                      'How often to save summaries for trained models. Pass 0 '
                      'to disable summaries.')
 flags.DEFINE_integer('save_model_secs', 0,
                      'How often to save trained models. Pass 0 to disable '
                      'checkpoints.')
-flags.DEFINE_string('train_dir', None,
+flags.DEFINE_string('train_dir', HOME+'/logs/train/',
                     'Path to session checkpoints. Pass None to disable saving '
                     'checkpoint at the end.')
-flags.DEFINE_string('eval_dir', '/tmp/tf_cnn_benchmarks/eval',
+flags.DEFINE_string('eval_dir', HOME+'/logs/eval/',
                     'Directory where to write eval event logs.')
 flags.DEFINE_string('result_storage', None,
                     'Specifies storage option for benchmark results. None '
@@ -468,7 +484,7 @@ flags.DEFINE_string('result_storage', None,
                     'permissions and meant to be used from cbuilds).')
 
 # Benchmark logging for model garden metric
-flags.DEFINE_string('benchmark_log_dir', None,
+flags.DEFINE_string('benchmark_log_dir', HOME+'/logs/benchmark_log',
                     'The directory to place the log files containing the '
                     'results of benchmark. The logs are created by '
                     'BenchmarkFileLogger. Requires the root of the Tensorflow '
@@ -660,8 +676,11 @@ def benchmark_one_step(sess,
   step_train_times.append(train_time)
   if (show_images_per_sec and step >= 0 and
       (step == 0 or (step + 1) % params.display_every == 0)):
+    speed_mean, speed_uncertainty, speed_jitter = get_perf_timing(
+        batch_size, step_train_times)
     log_str = '%i\t%s\t%.*f' % (
-        step + 1, get_perf_timing_str(batch_size, step_train_times),
+        step + 1, 
+        get_perf_timing_str(batch_size, speed_uncertainty, speed_jitter),
         LOSS_AND_ACCURACY_DIGITS_TO_SHOW, lossval)
     if 'top_1_accuracy' in results:
       log_str += '\t%.*f\t%.*f' % (
@@ -669,9 +688,14 @@ def benchmark_one_step(sess,
           LOSS_AND_ACCURACY_DIGITS_TO_SHOW, results['top_5_accuracy'])
     log_fn(log_str)
     if benchmark_logger:
-      # TODO(scottzhu): This might impact the benchmark speed since it writes
-      # the benchmark log to local directory.
-      benchmark_logger.log_evaluation_result(results)
+      benchmark_logger.log_metric(
+          'current_examples_per_sec', speed_mean, global_step=step + 1)
+      if 'top_1_accuracy' in results:
+        benchmark_logger.log_metric(
+            'top_1_accuracy', results['top_1_accuracy'], global_step=step + 1)
+        benchmark_logger.log_metric(
+            'top_5_accuracy', results['top_5_accuracy'], global_step=step + 1)
+
   if need_options_and_metadata:
     if should_profile:
       profiler.add_step(step, run_metadata)
@@ -703,20 +727,20 @@ def benchmark_one_step(sess,
         tf.train.write_graph(graph_def, path, graph_filename, as_text)
   return summary_str
 
-
-def get_perf_timing_str(batch_size, step_train_times, scale=1):
-  times = np.array(step_train_times)
-  speeds = batch_size / times
-  speed_mean = scale * batch_size / np.mean(times)
+def get_perf_timing_str(speed_mean, speed_uncertainty, speed_jitter, scale=1):
   if scale == 1:
-    speed_uncertainty = np.std(speeds) / np.sqrt(float(len(speeds)))
-    speed_madstd = 1.4826 * np.median(np.abs(speeds - np.median(speeds)))
-    speed_jitter = speed_madstd
     return ('images/sec: %.1f +/- %.1f (jitter = %.1f)' %
             (speed_mean, speed_uncertainty, speed_jitter))
   else:
     return 'images/sec: %.1f' % speed_mean
 
+def get_perf_timing(batch_size, step_train_times, scale=1):
+  times = np.array(step_train_times)
+  speeds = batch_size / times
+  speed_mean = scale * batch_size / np.mean(times)
+  speed_uncertainty = np.std(speeds) / np.sqrt(float(len(speeds)))
+  speed_jitter = 1.4826 * np.median(np.abs(speeds - np.median(speeds)))
+  return speed_mean, speed_uncertainty, speed_jitter
 
 def load_checkpoint(saver, sess, ckpt_dir):
   ckpt = tf.train.get_checkpoint_state(ckpt_dir)
@@ -1085,7 +1109,10 @@ class BenchmarkCNN(object):
     # number of GPUs.
     if self.params.batch_size > 0:
       self.model.set_batch_size(self.params.batch_size)
-    self.batch_size = self.model.get_batch_size() * self.num_gpus
+    if self.params.device == 'gpu':
+      self.batch_size = self.model.get_batch_size() * self.num_gpus
+    else:
+      self.batch_size = self.model.get_batch_size()
     self.batch_group_size = self.params.batch_group_size
     self.enable_auto_loss_scale = (
         self.params.use_fp16 and self.params.fp16_enable_auto_loss_scale)
@@ -1148,12 +1175,21 @@ class BenchmarkCNN(object):
     # Device to use for ops that need to always run on the local worker's CPU.
     self.cpu_device = '%s/cpu:0' % worker_prefix
 
-    # Device to use for ops that need to always run on the local worker's
-    # compute device, and never on a parameter server device.
-    self.raw_devices = [
-        '%s/%s:%i' % (worker_prefix, self.params.device, i)
-        for i in xrange(self.num_gpus)
-    ]
+    if (self.num_gpus == 0 and self.params.device == 'cpu'):
+      is_cpu_compute = True
+    else:
+      is_cpu_compute = False
+
+    if (is_cpu_compute):
+      # self.raw_devices = ['%s/cpu:0' % worker_prefix]
+      self.raw_devices = ['%s/%s:%i' % (worker_prefix, self.params.device, 0)]
+    else:
+      # Device to use for ops that need to always run on the local worker's
+      # compute device, and never on a parameter server device.
+      self.raw_devices = [
+          '%s/%s:%i' % (worker_prefix, self.params.device, i)
+          for i in xrange(self.num_gpus)
+      ]
 
     subset = 'validation' if params.eval else 'train'
     self.num_batches, self.num_epochs = get_num_batches_and_epochs(
@@ -1249,10 +1285,8 @@ class BenchmarkCNN(object):
     worker_prefix = ('job:localhost' if is_local else
                      '/job:worker/replica:0/task:%s' % task_num)
     self.cpu_device = '%s/cpu:0' % worker_prefix
-    self.raw_devices = [
-        '%s/%s:%i' % (worker_prefix, self.params.device, i)
-        for i in xrange(self.num_gpus)
-    ]
+    # set raw to cpu only
+    self.raw_devices = ['%s/cpu:0' % worker_prefix]
     self.devices = self.variable_mgr.get_devices()
 
   def raw_devices_across_tasks(self, is_local=False):
@@ -2413,8 +2447,8 @@ class BenchmarkCNN(object):
     return processor_class(
         image_size,
         image_size,
-        self.batch_size * self.batch_group_size,
-        len(self.devices) * self.batch_group_size,
+        self.batch_size * self.batch_group_size,    # batch_size=32, batch_group_size=1
+        len(self.devices) * self.batch_group_size,                 
         dtype=input_data_type,
         train=(not self.params.eval),
         distortions=self.params.distortions,
