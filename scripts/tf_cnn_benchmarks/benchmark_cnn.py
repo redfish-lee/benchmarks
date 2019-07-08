@@ -60,13 +60,20 @@ from models import model_config
 from platforms import util as platforms_util
 
 HOME=os.environ['HOME']
-_DEFAULT_NUM_BATCHES = 100
+_DEFAULT_NUM_BATCHES = 400
 
 # hades03 no gpus
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 # TODO(reedwm): add upper_bound and lower_bound to appropriate integer and
 # float flags, and change certain string flags to enum flags.
+
+# new param
+flags.DEFINE_boolean('cluster_block_waiting', False,
+                     'If cluster_block_waiting is True, wait all workers '
+                     'join to start training. If False, we set ConfigProto'
+                     'device filter to limit only connection between ps and'
+                     'this worker itself.')
 
 flags.DEFINE_string('model', 'resnet32',
                     'Name of the model to run, the list of supported models '
@@ -94,7 +101,7 @@ flags.DEFINE_boolean('freeze_when_forward_only', False,
 flags.DEFINE_boolean('print_training_accuracy', True,
                      'whether to calculate and print training accuracy during '
                      'training')
-flags.DEFINE_integer('batch_size', 64, 'batch size per compute device /32')
+flags.DEFINE_integer('batch_size', 32, 'batch size per compute device /32')
 flags.DEFINE_integer('batch_group_size', 1,
                      'number of groups of batches processed in the image '
                      'producer.')
@@ -109,7 +116,7 @@ flags.DEFINE_integer('autotune_threshold', None,
                      'The autotune threshold for the models')
 flags.DEFINE_integer('num_gpus', 1, 'the number of GPUs to run on')
 flags.DEFINE_string('gpu_indices', '', 'indices of worker GPUs in ring order')
-flags.DEFINE_integer('display_every', 100,
+flags.DEFINE_integer('display_every', 10,
                      'Number of local steps after which progress is printed '
                      'out')
 flags.DEFINE_string('data_dir', '/dev/shm/cifar10/cifar-10-batches-py/',
@@ -182,11 +189,11 @@ flags.DEFINE_enum('local_parameter_device', 'cpu', ('cpu', 'gpu', 'CPU', 'GPU'),
                   'Device to use as parameter server: cpu or gpu. For '
                   'distributed training, it can affect where caching of '
                   'variables happens.')
-# NHWC for cpu
-# But mkl is optimized for NCHW 
+# NHWC for cpu,
+# though mkl is optimized for NCHW, we use NHWC due to some op execution 
 flags.DEFINE_enum('device', 'cpu', ('cpu', 'gpu', 'CPU', 'GPU'),
                   'Device to use for computation: cpu or gpu')
-flags.DEFINE_enum('data_format', 'NCHW', ('NHWC', 'NCHW'),
+flags.DEFINE_enum('data_format', 'NHWC', ('NHWC', 'NCHW'),
                   'Data layout to use: NHWC (TF native) or NCHW (cuDNN '
                   'native, requires GPU).')
 
@@ -579,11 +586,21 @@ def create_config_proto(params):
     params: Params tuple, typically created by make_params or
             make_params_from_flags.
   """
-  config = tf.ConfigProto()
+
+
+  # Eliminate block waiting between workers
+  if params.cluster_block_waiting is False:
+    config = tf.ConfigProto(
+      device_filters=["/job:ps", "/job:worker/task:%d" % params.task_index])
+  else:
+    config = tf.ConfigProto()
+  
   config.allow_soft_placement = True
   config.intra_op_parallelism_threads = params.num_intra_threads
   config.inter_op_parallelism_threads = params.num_inter_threads
   config.gpu_options.force_gpu_compatible = params.force_gpu_compatible
+
+
   if params.allow_growth is not None:
     config.gpu_options.allow_growth = params.allow_growth
   if params.gpu_memory_frac_for_testing > 0:
@@ -604,7 +621,6 @@ def create_config_proto(params):
     config.gpu_options.visible_device_list = str(hvd.local_rank())
 
   return config
-
 
 def get_mode_from_params(params):
   """Returns the mode in which this script is running.
@@ -1548,10 +1564,10 @@ class BenchmarkCNN(object):
     fetches_list = nest.flatten(list(fetches.values()))
     main_fetch_group = tf.group(*fetches_list)
     execution_barrier = None
-    if (not self.single_session and self.job_name and
-        not self.params.cross_replica_sync):
-      execution_barrier = self.add_sync_queues_and_barrier(
-          'execution_barrier_', [])
+    #if (not self.single_session and self.job_name and
+    #     not self.params.cross_replica_sync):
+    #   execution_barrier = self.add_sync_queues_and_barrier(
+    #       'execution_barrier_', [])
 
     global_step = tf.train.get_global_step()
     with tf.device(self.global_step_device):
